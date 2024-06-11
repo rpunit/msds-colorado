@@ -1,0 +1,127 @@
+---
+title: "Covid Data"
+output: html_document
+
+---
+## Analysis of the covid dataset and analyse the relationship between the occurance-rate and population.
+
+Covid data has been analysed several ways, and the simplest kind of analysis is to join it with the deaths
+and perform various visualizaitons and analysis baseed on that. This has been done before and several times.
+I thought it would be interesting to download the population dataset from cencus.gov and see if we can identify
+counties that do better or worse in December of 2021.
+
+## Biases
+
+### Bias in data collection.
+Several biases may occur at the point of data collection. There was a lot of misinformation going around during 
+covid and it is possible that some counties that show low case count may have under-reported.
+
+### Personal biases
+I believe in the scientific method and that most people/gov officials/doctors acted in good faith during the pandemic. This attitude, I hope helps me overcome any personal bias in my analysis. The analysis is not based on race,age or gender and therefore I don't think there is any scope for personal bias affecting the result 
+
+
+## Data Source :
+
+"time_series_covid19_confirmed_US.csv",  "time_series_covid19_confirmed_global.csv", "time_series_covid19_deaths_US.csv",  "time_series_covid19_deaths_global.csv"
+
+### Lets download the data
+```{r}
+library(tidyverse)
+
+cov_us <- read_csv('https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_US.csv')
+
+#cov_global <- read_csv('https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_global.csv')
+
+#cov_us_deaths <- read_csv('https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_US.csv')
+
+#cov_global_deaths <- read_csv('https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_global.csv')
+
+head(cov_us)
+#head(cov_us_deaths)
+
+```
+### Convert Covid US data long table and fiter by date = 2020-12-01 
+```{r}
+cov_us_2020 <- cov_us %>% mutate(Combined_Key=paste0(Province_State," ", Admin2, ' County'))  %>%
+    select(-c('UID','iso2','iso3','code3','FIPS','Admin2', 'Lat', 'Long_')) %>% 
+    pivot_longer(cols=-c('Province_State', 'Country_Region', 'Combined_Key'), names_to='dates', values_to='cases') %>%
+    mutate(dates=as.Date(dates, '%m/%d/%y')) %>% 
+    mutate(year_month=as.Date(format(dates, '%Y-%m-01'))) %>% 
+    filter(dates=='2020-12-01')
+cov_us_2020$year <- '2020'
+
+```
+### Get population data at county level from cencus.gov
+Download the data, clean and rearrange
+```{r}
+df_pop <- read_csv('https://www2.census.gov/programs-surveys/popest/datasets/2020-2023/counties/totals/co-est2023-alldata.csv')
+df_pop <- df_pop %>% select(c('STNAME','CTYNAME','ESTIMATESBASE2020','POPESTIMATE2020','POPESTIMATE2021','POPESTIMATE2022','POPESTIMATE2023'))
+df_pop$combined_key <- paste0(df_pop$STNAME, " ", df_pop$CTYNAME)
+df_pop_year <- df_pop %>% rename('2020'=POPESTIMATE2020, '2021'=POPESTIMATE2021, '2022'=POPESTIMATE2022, '2023'=POPESTIMATE2023) %>% pivot_longer(cols=-c('STNAME', 'CTYNAME', 'combined_key'), names_to = 'date', values_to = 'population')
+```
+
+### Join the two datasets
+
+#### What the counties/cities with the highest occurance as a % of the population?
+```{r}
+df_us_occ <- left_join(cov_us_2020, df_pop_year, by=join_by(Combined_Key==combined_key, year==date))
+df_us_occ$perc_occ <- df_us_occ$cases*100/df_us_occ$population
+head(df_us_occ %>% arrange(desc(perc_occ), as.integer(year_month))) %>% select(Combined_Key, population, perc_occ)
+```
+In December 2020, Colorado Crowlery County had the higest no of cases as a % of the population. But thats a relatively smaller county. Does the picture change for a county with population > 100000?
+
+```{r}
+head(df_us_occ %>% filter(population> 100000 & year=='2020') %>% arrange(desc(perc_occ), as.integer(year_month))) %>% select(Combined_Key, population, cases, perc_occ)
+
+```
+
+It is now the Potter County in Texas with a rate of 11.75 % in Dec 2020!
+
+#### Lets plot the cumulative cases over tie for Texas Potter County
+```{r}
+cov_piv <- cov_us %>% mutate(Combined_Key=paste0(Province_State," ", Admin2, ' County'))  %>%
+    select(-c('UID','iso2','iso3','code3','FIPS','Admin2', 'Lat', 'Long_')) %>% 
+    pivot_longer(cols=-c('Province_State', 'Country_Region', 'Combined_Key'), names_to='dates', values_to='cases') %>%
+    mutate(dates=as.Date(dates, '%m/%d/%y'))
+  
+  
+cov_piv %>% filter(Combined_Key=='Texas Potter County') %>% 
+  arrange(cases) %>% select(Combined_Key, dates, cases) %>% ggplot(aes(x=dates, y=cases )) + ggtitle("Cummulative cases for Texas Potter County") + geom_line()
+```
+
+What is the relationship between population and occurrence? We'll also add a line of best fit
+``` {r}
+df1 <- df_us_occ %>% filter(population>10000 & population<1000000) %>% arrange(population) %>% select(Combined_Key, population, cases, perc_occ) 
+
+fit <- lm(perc_occ ~ population, data=df1)
+df1$pred <- predict(fit, df1)
+df1 %>% ggplot(aes(x=population, y=perc_occ)) + geom_point() + geom_line(aes(y=pred))
+```
+
+Its obvious that there is a relationship between the population of a county and the number of cases. Howver we see that
+that for counties with smaller populaiton there is a huge spread, with some counties doing much worse than the others.  
+
+#### What are the counties with low population and high occurance ?
+
+```{r}
+head(df_us_occ %>% select(Combined_Key, perc_occ, population) %>% filter(population < 10000 & perc_occ > 10) %>% arrange(desc(perc_occ)))
+```
+
+
+#### What are the counties with low population and low occurance?
+
+```{r}
+head(df_us_occ %>% select(Combined_Key, perc_occ, population) %>% filter(population < 10000 & perc_occ <1) %>% arrange(perc_occ))
+```
+
+So in December 2020 when the pandemic was at its peak, there were countines with 0 case load. Exactly how many ?
+
+```{r}
+df_us_occ %>% select(Combined_Key, perc_occ, population) %>% filter(perc_occ==0) %>% arrange(desc(population))
+```
+ Around 25 countly, mostly in Utah, with Weber county having 1/4 million population have 0 cases! Are these rural isolated communities? It would be awesome to put these on map and see if a pattern emerges.
+ 
+ *P.S*: The mapping packages are difficult to install on machine and I am leaving that as an exercise for next time.
+ 
+ 
+ 
