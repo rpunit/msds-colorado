@@ -1,0 +1,95 @@
+---
+title: "nyshooting"
+author: "PR"
+date: '2024-05-25'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+##  NY Shooting dataset
+This dataset is sourced from data.gov website, so we know its from an authentic source.
+
+This dataset is a breakdown of every shooting incident that occurred in NYC going back to 2006 through the end of the previous calendar year. This data is manually extracted every quarter and reviewed by the Office of Management Analysis and Planning before being posted on the NYPD website. Each record represents a shooting incident in NYC and includes information about the event, the location and time of occurrence. In addition, information related to suspect and victim demographics is also included.
+
+### Sources of Bias
+1. Bias in data collection. How is the data collected ? Is it from the police report of the incident? What about shootings that go unreported ? Are some locations/races more prone to under/over reporting?
+2. My Personal Biases: I would like to think that I am not biased aginst any race or culture. However, I do not know if I have any unconscious biases that may affect my analysis. Are the questions I am asking because of a confirmation bias ?
+
+
+## Read the City of New York Shooting dataset
+```{r }
+library(tidyverse)
+
+sdata <- read_csv('https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD')
+```
+
+## Summary of the data
+
+```{r , echo=FALSE}
+summary(sdata)
+```
+# Clean up
+The head() of data revels that there is lot of missing data that cannot be filled in. We'll ignore these columns for now and select only a few that are useful for this exercise
+
+```{r }
+   cdata <- sdata %>% select(c(BORO,OCCUR_DATE, OCCUR_TIME, PRECINCT, PERP_AGE_GROUP, PERP_RACE, PERP_SEX, VIC_AGE_GROUP, VIC_RACE,VIC_SEX)) %>% drop_na()
+head(cdata)
+```
+
+
+#### We see that there are '(null)' strings. We can filter those out as well. Also OCCUR_DATE is a character string, We can convert it to Date object
+```{r}
+cdata <- cdata %>% filter(if_all(everything() ,~ .x != '(null)'))
+cdata <- cdata %>% mutate(OCCUR_DATE_D = as.Date(OCCUR_DATE, '%m/%d/%Y')) %>% arrange(OCCUR_DATE_D) 
+head(cdata)
+```
+
+## Analyzing the data
+Which boro has the highest crime? We don't have population no, so we don't have crime per capita
+so this should be taken as a pinc of salt
+```{r}
+cdata %>% group_by(BORO) %>% count()
+```
+From the data above it seems that Brooklyn seems to have the highest no of shooting incidents. 
+Lets look at the crime trends over the years
+```{r echo=T}
+cdata %>% group_by(OCCUR_DATE_D) %>% count() %>% ggplot( aes(x=OCCUR_DATE_D, y=n)) + geom_line() 
+```
+
+This plot looks a bit busy. We can aggregate monthly instead of daily and try to redraw the plot
+
+```{r echo=T}
+cdata %>% mutate(YEAR_MONTH=as.Date(format(OCCUR_DATE_D, '%Y-%m-01'))) %>% group_by(YEAR_MONTH) %>% count() %>% ggplot( aes(x=YEAR_MONTH, y=n)) + geom_line() 
+```
+
+Definitely the crime seems to be on a downward trend from 2006 - 2020. What happened between 2020-2023? Also there seems to be seasonality to the crimes. The crime seems to increase during the summer months.
+
+#### Lets break this doata down by boros
+```{r echo=T}
+boro_data <- cdata %>% mutate(YEAR_MONTH=as.Date(format(OCCUR_DATE_D, '%Y-%m-01'))) %>% group_by(YEAR_MONTH,BORO) %>% count() %>% pivot_wider(names_from=BORO, values_from = n)
+
+boro_data  %>% ggplot(aes(x=YEAR_MONTH)) + geom_line(aes(y = BRONX), color = "blue")
+boro_data  %>% ggplot(aes(x=YEAR_MONTH)) + geom_line(aes(y = MANHATTAN), color = "blue")
+boro_data  %>% ggplot(aes(x=YEAR_MONTH)) + geom_line(aes(y = BROOKLYN), color = "blue")
+boro_data  %>% ggplot(aes(x=YEAR_MONTH)) + geom_line(aes(y = `STATEN ISLAND`), color = "blue")
+boro_data  %>% ggplot(aes(x=YEAR_MONTH)) + geom_line(aes(y = QUEENS), color = "blue")
+
+```
+
+What do we see?
+
+While bronx seems to follow the the overall trend, Staten Island seems to be more or less flat, taking the seasonality in to account. What could be the reason for that? Is it the income levels, racial composition, or both ? These are some intresting questions for which we'll need additional data.
+
+
+## Model
+With this data its difficult to pick dependent variable ~ independent variable. Ideally we should have a numerical dataset for us to create a model. A crude attempt is to created a model based on VIC race. Who are the victims of the crimes ?
+
+```{r}
+
+vic_race <- cdata %>% mutate(VIC_RACE_F=factor(VIC_RACE)) %>% group_by(VIC_RACE_F) %>% count() 
+summary(lm(n ~ VIC_RACE_F, data=vic_race))
+```
+
+Its obvious that BLACKs and HISPANICs are the major victims. 
